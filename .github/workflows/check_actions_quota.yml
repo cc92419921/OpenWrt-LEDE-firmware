@@ -1,57 +1,63 @@
-name: Check GitHub Actions Remaining Minutes
+name: Check GitHub Actions Quota (Personal Account)
 
 on:
+  workflow_dispatch:  # 手动触发
   #schedule:
-  #  - cron: '0 0 * * *'  # 每天运行一次
-  workflow_dispatch:  # 允许手动触发
+  #  - cron: '0 0 * * *'  # 每天凌晨运行一次（可选）
 
 jobs:
-  check-usage:
+  check-quota:
     runs-on: ubuntu-latest
     steps:
-      - name: Check GitHub Actions Usage
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Get Actions Quota (Personal Account)
+        id: quota
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO_OWNER: ${{ github.repository_owner }}
+          GITHUB_PAT: ${{ secrets.GITHUB_PAT }}
         run: |
-          # 获取当前月份
-          CURRENT_MONTH=$(date +%Y-%m)
-          
-          echo "查询 $CURRENT_MONTH 的 GitHub Actions 使用情况..."
-          
-          # 调用GitHub API获取Actions使用情况
-          RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/orgs/$REPO_OWNER/actions/secrets/public-key" || \
-            curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/users/$REPO_OWNER/actions/secrets/public-key")
-          
-          # 检查是否是组织还是个人
-          if echo "$RESPONSE" | grep -q "organization"; then
-            TYPE="orgs"
-          else
-            TYPE="users"
+          API_URL="https://api.github.com/users/${GITHUB_ACTOR}/settings/billing/actions"
+          AUTH_HEADER="Authorization: Bearer $GITHUB_PAT"
+
+          echo "Fetching Actions quota data from GitHub..."
+
+          RESPONSE=$(curl -s -H "$AUTH_HEADER" -H "Accept: application/vnd.github+json" $API_URL)
+
+          if [[ $? -ne 0 ]]; then
+            echo "❌ Failed to fetch data from GitHub API."
+            exit 1
           fi
-          
-          # 获取使用数据
-          USAGE_RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/$TYPE/$REPO_OWNER/actions/usage")
-          
-          # 提取当前月份的使用分钟数
-          MINUTES_USED=$(echo "$USAGE_RESPONSE" | jq -r ".minutes_
-          MINused")UTES_INCLUDED=$(echo "$USAGE_RESPONSE" | jq -r ".minutes_included")
-          
-          # 计算剩余分钟数
-          REMAINING_MINUTES=$((MINUTES_INCLUDED - MINUTES_USED))
-          
-          # 显示结果
-          echo "=========================================="
-          echo "GitHub Actions 使用情况 ($CURRENT_MONTH):"
-          echo "已使用分钟数: $MINUTES_USED"
-          echo "包含的免费分钟数: $MINUTES_INCLUDED"
-          echo "剩余免费分钟数: $REMAINING_MINUTES"
-          echo "=========================================="
-          
-          # 如果剩余分钟不足10%，发送警告
-          if [ $REMAINING_MINUTES -lt $((MINUTES_INCLUDED / 10)) ]; then
-            echo "警告: 剩余分钟数不足10%，请注意控制使用量！"
-          fi
+
+          # 解析 JSON 数据
+          included_minutes=$(echo "$RESPONSE" | jq -r '.included_minutes')
+          total_minutes_used=$(echo "$RESPONSE" | jq -r '.total_minutes_used')
+          total_paid_minutes_used=$(echo "$RESPONSE" | jq -r '.total_paid_minutes_used')
+          total_minutes_allocated=$(echo "$RESPONSE" | jq -r '.total_minutes_allocated')
+
+          # 将变量写入环境变量供后续步骤使用
+          echo "included_minutes=$included_minutes" >> $GITHUB_ENV
+          echo "total_minutes_used=$total_minutes_used" >> $GITHUB_ENV
+          echo "total_paid_minutes_used=$total_paid_minutes_used" >> $GITHUB_ENV
+          echo "total_minutes_allocated=$total_minutes_allocated" >> $GITHUB_ENV
+
+      - name: Show Quota Info
+        run: |
+          remaining_minutes=$(( included_minutes - total_minutes_used ))
+          echo "📊 GitHub Actions Monthly Quota Info"
+          echo "--------------------------------------"
+          echo "Included Free Minutes:       $included_minutes 分钟"
+          echo "Total Minutes Used:          $total_minutes_used 分钟"
+          echo "Total Paid Minutes Used:     $total_paid_minutes_used 分钟"
+          echo "Total Minutes Allocated:     $total_minutes_allocated 分钟"
+          echo "Remaining Free Minutes:      $remaining_minutes 分钟"
+          echo "Remaining Free Hours:        $(( remaining_minutes / 60 )) 小时 $(( remaining_minutes % 60 )) 分钟"
+          echo "--------------------------------------"
+
+      - name: Warn if near quota limit
+        if: env.remaining_minutes < 100
+        run: |
+          echo "⚠️ Warning: You have less than 100 free minutes left!"
