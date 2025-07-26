@@ -1,52 +1,57 @@
-name: Check GitHub Actions Quota
+name: Check GitHub Actions Remaining Minutes
 
 on:
-  workflow_dispatch:  # 手动触发
   #schedule:
-    #- cron: '0 0 * * *'  # 每天凌晨自动运行一次（可选）
+  #  - cron: '0 0 * * *'  # 每天运行一次
+  workflow_dispatch:  # 允许手动触发
 
 jobs:
-  check-quota:
+  check-usage:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v4
-
-      - name: Get Actions Quota
-        id: quota
+      - name: Check GitHub Actions Usage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_OWNER: ${{ github.repository_owner }}
         run: |
-          AUTH_HEADER="Authorization: Bearer ${{ secrets.GITHUB_PAT }}"
-          API_URL="https://api.github.com/users/${{ github.actor }}/settings/billing/actions"
-
-          echo "Fetching Actions quota data from GitHub..."
-
-          RESPONSE=$(curl -s -H "$AUTH_HEADER" -H "Accept: application/vnd.github+json" $API_URL)
-
-          echo "Raw response:"
-          echo "$RESPONSE"
-
-          total_minutes_allocated=$(echo "$RESPONSE" | jq -r '.total_minutes_allocated')
-          total_paid_minutes_used=$(echo "$RESPONSE" | jq -r '.total_paid_minutes_used')
-          total_minutes_used=$(echo "$RESPONSE" | jq -r '.total_minutes_used')
-          included_minutes=$(echo "$RESPONSE" | jq -r '.included_minutes')
-
-          echo "total_minutes_allocated=$total_minutes_allocated" >> $GITHUB_ENV
-          echo "total_paid_minutes_used=$total_paid_minutes_used" >> $GITHUB_ENV
-          echo "total_minutes_used=$total_minutes_used" >> $GITHUB_ENV
-          echo "included_minutes=$included_minutes" >> $GITHUB_ENV
-
-      - name: Show Quota Info
-        run: |
-          echo "📊 GitHub Actions Monthly Quota Info"
-          echo "--------------------------------------"
-          echo "Included Free Minutes:       ${{ env.included_minutes }} minutes"
-          echo "Total Minutes Used:          ${{ env.total_minutes_used }} minutes"
-          echo "Total Paid Minutes Used:     ${{ env.total_paid_minutes_used }} minutes"
-          echo "Total Minutes Allocated:     ${{ env.total_minutes_allocated }} minutes"
-          echo "Remaining Free Minutes:      $(( ${{ env.included_minutes }} - ${{ env.total_minutes_used }} )) minutes"
-          echo "--------------------------------------"
-
-      - name: Send Slack or Email Notification (Optional)
-        if: env.total_minutes_used >= 4000
-        run: |
-          echo "⚠️ You have used over 4000 minutes. Consider upgrading or monitoring usage."
+          # 获取当前月份
+          CURRENT_MONTH=$(date +%Y-%m)
+          
+          echo "查询 $CURRENT_MONTH 的 GitHub Actions 使用情况..."
+          
+          # 调用GitHub API获取Actions使用情况
+          RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/orgs/$REPO_OWNER/actions/secrets/public-key" || \
+            curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/users/$REPO_OWNER/actions/secrets/public-key")
+          
+          # 检查是否是组织还是个人
+          if echo "$RESPONSE" | grep -q "organization"; then
+            TYPE="orgs"
+          else
+            TYPE="users"
+          fi
+          
+          # 获取使用数据
+          USAGE_RESPONSE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/$TYPE/$REPO_OWNER/actions/usage")
+          
+          # 提取当前月份的使用分钟数
+          MINUTES_USED=$(echo "$USAGE_RESPONSE" | jq -r ".minutes_
+          MINused")UTES_INCLUDED=$(echo "$USAGE_RESPONSE" | jq -r ".minutes_included")
+          
+          # 计算剩余分钟数
+          REMAINING_MINUTES=$((MINUTES_INCLUDED - MINUTES_USED))
+          
+          # 显示结果
+          echo "=========================================="
+          echo "GitHub Actions 使用情况 ($CURRENT_MONTH):"
+          echo "已使用分钟数: $MINUTES_USED"
+          echo "包含的免费分钟数: $MINUTES_INCLUDED"
+          echo "剩余免费分钟数: $REMAINING_MINUTES"
+          echo "=========================================="
+          
+          # 如果剩余分钟不足10%，发送警告
+          if [ $REMAINING_MINUTES -lt $((MINUTES_INCLUDED / 10)) ]; then
+            echo "警告: 剩余分钟数不足10%，请注意控制使用量！"
+          fi
