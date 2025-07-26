@@ -1,35 +1,52 @@
-
 name: Check GitHub Actions Quota
 
 on:
   workflow_dispatch:  # 手动触发
   #schedule:
-  #  - cron: '0 0 * * *'  # 每天UTC时间0点自动运行
+    #- cron: '0 0 * * *'  # 每天凌晨自动运行一次（可选）
 
 jobs:
   check-quota:
     runs-on: ubuntu-latest
     steps:
-      - name: Check API rate limit
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Get Actions Quota
+        id: quota
         run: |
-          # 获取当前账号的Actions配额信息
-          response=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/rate_limit")
-          
-          # 解析剩余分钟数
-          remaining=$(echo "$response" | jq -r '.resources.actions.remaining')
-          limit=$(echo "$response" | jq -r '.resources.actions.limit')
-          reset_time=$(echo "$response" | jq -r '.resources.actions.reset')
-          
-          # 转换为北京时间并计算剩余百分比
-          reset_readable=$(date -d @$reset_time +"%Y-%m-%d %H:%M:%S")
-          percentage=$((remaining * 100 / limit))
-          
-          echo "剩余额度: $remaining/$limit 分钟 ($percentage%)"
-          echo "重置时间: $reset_readable (UTC)"
-          
-          # 低于20%时警告
-          if [ $percentage -lt 20 ]; then
-            echo "::warning::GitHub Actions剩余额度不足20%!"
-          fi
+          AUTH_HEADER="Authorization: Bearer ${{ secrets.GITHUB_PAT }}"
+          API_URL="https://api.github.com/users/${{ github.actor }}/settings/billing/actions"
+
+          echo "Fetching Actions quota data from GitHub..."
+
+          RESPONSE=$(curl -s -H "$AUTH_HEADER" -H "Accept: application/vnd.github+json" $API_URL)
+
+          echo "Raw response:"
+          echo "$RESPONSE"
+
+          total_minutes_allocated=$(echo "$RESPONSE" | jq -r '.total_minutes_allocated')
+          total_paid_minutes_used=$(echo "$RESPONSE" | jq -r '.total_paid_minutes_used')
+          total_minutes_used=$(echo "$RESPONSE" | jq -r '.total_minutes_used')
+          included_minutes=$(echo "$RESPONSE" | jq -r '.included_minutes')
+
+          echo "total_minutes_allocated=$total_minutes_allocated" >> $GITHUB_ENV
+          echo "total_paid_minutes_used=$total_paid_minutes_used" >> $GITHUB_ENV
+          echo "total_minutes_used=$total_minutes_used" >> $GITHUB_ENV
+          echo "included_minutes=$included_minutes" >> $GITHUB_ENV
+
+      - name: Show Quota Info
+        run: |
+          echo "📊 GitHub Actions Monthly Quota Info"
+          echo "--------------------------------------"
+          echo "Included Free Minutes:       ${{ env.included_minutes }} minutes"
+          echo "Total Minutes Used:          ${{ env.total_minutes_used }} minutes"
+          echo "Total Paid Minutes Used:     ${{ env.total_paid_minutes_used }} minutes"
+          echo "Total Minutes Allocated:     ${{ env.total_minutes_allocated }} minutes"
+          echo "Remaining Free Minutes:      $(( ${{ env.included_minutes }} - ${{ env.total_minutes_used }} )) minutes"
+          echo "--------------------------------------"
+
+      - name: Send Slack or Email Notification (Optional)
+        if: env.total_minutes_used >= 4000
+        run: |
+          echo "⚠️ You have used over 4000 minutes. Consider upgrading or monitoring usage."
