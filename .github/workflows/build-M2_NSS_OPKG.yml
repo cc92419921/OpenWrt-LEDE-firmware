@@ -1,4 +1,4 @@
-name: Build M2_NSS OpenWrt
+name: Build M2_NSS_OPKG OpenWrt
 
 on:
   repository_dispatch:
