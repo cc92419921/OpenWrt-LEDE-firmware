@@ -1,0 +1,18 @@
+name: GHA Usage Audit
+on:
+  workflow_dispatch:  # 手动触发
+#  schedule:
+#    - cron: "0 3 * * *" # Runs at 03:00 AM (UTC) every day
+jobs:
+  gha-usage-minutes-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: GitHub Actions Usage Audit
+        uses: fergusmacd/github-action-usage@daff7e5517914546a1e39fcc22f476e1471853f6 # use a commit SHA
+        # pass user input as arguments
+        with:
+          organisation: ${{secrets.ORGANISATION}}
+          gitHubAPIKey: ${{secrets.GITHUBAPIKEY}} # default token in GitHub Workflow
+          loglevel: error # not required, change to debug if misbehaving
+          raisealarmremainingminutes: 100 # not required, defaults to 100
+          skipReposWithoutUsage: false
